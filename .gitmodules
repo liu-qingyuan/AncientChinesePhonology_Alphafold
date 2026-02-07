@@ -1,0 +1,21 @@
+[submodule "alphafold3"]
+	path = alphafold3
+	url = https://github.com/google-deepmind/alphafold3.git
+[submodule "Ancient-Chinese-Phonology"]
+	path = Ancient-Chinese-Phonology
+	url = https://github.com/KaguraRuri/Ancient-Chinese-Phonology.git
+[submodule "cldf"]
+	path = cldf
+	url = https://github.com/cldf/cldf.git
+[submodule "denoising-diffusion-pytorch"]
+	path = denoising-diffusion-pytorch
+	url = https://github.com/lucidrains/denoising-diffusion-pytorch.git
+[submodule "phoible"]
+	path = phoible
+	url = https://github.com/phoible/dev.git
+[submodule "wikihan"]
+	path = wikihan
+	url = https://github.com/cmu-llab/wikihan.git
+[submodule "wikipron"]
+	path = wikipron
+	url = https://github.com/CUNY-CL/wikipron.git

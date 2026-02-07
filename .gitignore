@@ -1,0 +1,41 @@
+.DS_Store
+
+# Local tooling
+.claude/
+PGDN_IMPLEMENTATION_PLAN.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.ruff_cache/
+.pytest_cache/
+
+# Project outputs
+runs/
+logs/
+reports/
+
+# Papers / notes (local-only)
+paper/
+
+# Data (mostly local; keep minimal tracked files)
+data/*
+!data/external/
+!data/external/README.md
+
+# Derived ACP artifacts (generated from upstream dataset)
+data/anchors/
+data/graphs/
+data/splits/
+data/targets/
+
+# External datasets (local-only)
+data/external/links/
+data/external/dataset_registry.json
+data/external/mocha_timit/
+data/external/mocha_timit
+
+# OS / editor
+.idea/
+.vscode/
