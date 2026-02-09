@@ -41,3 +41,6 @@ data/external/CLTS/
 # OS / editor
 .idea/
 .vscode/
+
+# AI
+.sisyphus/

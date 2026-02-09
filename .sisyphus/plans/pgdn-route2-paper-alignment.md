@@ -326,6 +326,86 @@ PY`
   Acceptance Criteria:
   - Copy/paste commands in README run successfully on a fresh checkout (after submodules init)
 
+- [x] 10) Benchmark: run a repeatable comparison across coupling modes
+
+  What to do:
+  - Create `scripts/benchmark_group_coupling.py` as a thin subprocess orchestrator.
+  - For a single checkpoint + dataset slice, run infer + eval across 3 modes:
+    - `none`
+    - `shared_noise`
+    - `shared_denoise` (must run with `--cfg-scale != 1.0` so it is effective)
+  - Write an aggregated `summary.json` under the output directory:
+    - Includes paths to each mode's infer/eval outputs
+    - Embeds key fields from `infer_meta.json` and `eval.json`
+    - Captures coupling invariants from `infer_meta.json`:
+      - `mismatch_count == 0` for enabled modes
+      - `shared_denoise.effective == true` when mode is `shared_denoise` and cfg_scale != 1
+  - Optional: write `summary.csv` (one row per mode) when `--csv` is set.
+
+  Guardrails:
+  - Do NOT commit any artifacts under `runs/`.
+  - Keep runtime bounded by defaults: `limit=64`, `samples=2`, `num_steps=10`.
+  - Explicit preflight checks with actionable error messages:
+    - Missing checkpoint -> suggest the existing train smoke command in this plan
+    - Missing ACP artifacts -> suggest `PYTHONPATH=src python3 -m pgdn.data.build_acp ...`
+  - Eval script note: `scripts/eval_torch_pgdnv0.py` does its own sampling; treat eval as “quality sanity”, while coupling-specific verification is `infer_meta.json`.
+
+  References:
+  - `src/pgdn_torch/infer/pgdnv0_infer.py` - coupling flags + `infer_meta.json` schema
+  - `scripts/eval_torch_pgdnv0.py` - writes `eval.json`
+  - `scripts/run_v0_experiments.py` - subprocess orchestration style (print commands, `subprocess.run(check=True)`)
+
+  Acceptance Criteria:
+  - `python3 -m compileall -q src scripts` passes
+  - Happy path (ACP):
+    - Preconditions:
+      - `test -s runs/pgdnv0_paper_align_smoke/checkpoint_none.pt`
+      - `test -s data/targets/acp_targets.jsonl`
+      - `test -s data/splits/manifest.json`
+    - Run:
+      - `PYTHONPATH=src python3 scripts/benchmark_group_coupling.py \
+          --checkpoint runs/pgdnv0_paper_align_smoke/checkpoint_none.pt \
+          --targets data/targets/acp_targets.jsonl \
+          --split-manifest data/splits/manifest.json \
+          --split-strategy random \
+          --split dev \
+          --limit 64 \
+          --batch-size 16 \
+          --batching graph \
+          --samples 2 \
+          --num-steps 10 \
+          --seed 7 \
+          --cfg-scale 1.5 \
+          --out runs/bench_group_coupling_smoke \
+          --csv`
+    - Assert (non-interactive):
+      - `python3 - <<'PY'
+import json
+from pathlib import Path
+root = Path('runs/bench_group_coupling_smoke')
+summary = json.loads((root/'summary.json').read_text(encoding='utf-8'))
+assert set(summary['modes']) == {'none','shared_noise','shared_denoise'}
+for mode in summary['modes']:
+    m = summary['by_mode'][mode]
+    assert Path(m['infer_dir']).joinpath('infer_meta.json').is_file()
+    assert Path(m['eval_dir']).joinpath('eval.json').is_file()
+    c = m['infer_meta']['coupling']
+    if mode == 'none':
+        assert c['shared_noise']['enabled'] is False
+    else:
+        assert c['shared_noise']['enabled'] is True
+        assert c['shared_noise']['mismatch_count'] == 0
+    if mode == 'shared_denoise':
+        assert c['shared_denoise']['enabled'] is True
+        assert c['shared_denoise']['effective'] is True
+    else:
+        assert c['shared_denoise']['effective'] is False
+print('OK')
+PY`
+  - Hygiene: run artifacts are ignored and untracked:
+    - `git check-ignore -q runs/bench_group_coupling_smoke/summary.json` exits 0
+    - `git ls-files --error-unmatch runs/bench_group_coupling_smoke/summary.json` exits non-zero
+
 ---
 
 ## Success Criteria
