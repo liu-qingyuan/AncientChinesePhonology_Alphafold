@@ -114,11 +114,37 @@ def remove_link_if_exists(link_path: Path, dry_run: bool) -> None:
     link_path.unlink()
 
 
+def _is_clts_root(path: Path) -> bool:
+    # Heuristic signature check to reduce false positives.
+    # CLTS is typically a repo/checkout that contains CLDF metadata plus core TSVs.
+    return (
+        (path / "cldf-metadata.json").exists()
+        and (path / "data" / "sounds.tsv").exists()
+        and (path / "data" / "graphemes.tsv").exists()
+    )
+
+
+def resolve_existing_dataset(
+    root: Path, key: str, candidates: tuple[str, ...]
+) -> Path | None:
+    # Default behavior: first existing candidate path wins.
+    # Dataset-specific tweaks can be added here.
+    for rel in candidates:
+        candidate = (root / rel).resolve()
+        if not candidate.exists():
+            continue
+        if key == "clts" and not _is_clts_root(candidate):
+            continue
+        return candidate
+    return None
+
+
 def main() -> int:
     class Args(Namespace):
         root: str = "."
         external_dir: str = "data/external"
         dry_run: bool = False
+        clts_path: list[str] = []
 
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument(
@@ -136,6 +162,12 @@ def main() -> int:
         action="store_true",
         help="Compute outputs without writing files or links.",
     )
+    _ = parser.add_argument(
+        "--clts-path",
+        action="append",
+        default=[],
+        help="Additional CLTS candidate path(s). Can be repeated.",
+    )
     args = parser.parse_args(namespace=Args())
 
     root = Path(args.root).resolve()
@@ -148,7 +180,17 @@ def main() -> int:
 
     rows: list[dict[str, object]] = []
     for spec in DATASETS:
-        src = resolve_existing(root, spec.source_candidates)
+        candidates = spec.source_candidates
+        if spec.key == "clts":
+            extra: list[str] = []
+            env_path = os.environ.get("CLTS_PATH")
+            if env_path:
+                extra.append(env_path)
+            extra.extend(args.clts_path)
+            # Prepend user-provided candidates.
+            candidates = tuple(extra) + candidates
+
+        src = resolve_existing_dataset(root, spec.key, candidates)
         link_path = links_dir / spec.key
 
         if src is None:
@@ -158,7 +200,7 @@ def main() -> int:
                     "key": spec.key,
                     "label": spec.label,
                     "status": "missing",
-                    "source_candidates": list(spec.source_candidates),
+                    "source_candidates": list(candidates),
                     "source_path": None,
                     "link_path": None,
                     "file_count": 0,
@@ -168,6 +210,12 @@ def main() -> int:
             )
             continue
 
+        try:
+            source_path = str(src.relative_to(root))
+        except ValueError:
+            # User-provided dataset location can be outside the workspace root.
+            source_path = str(src)
+
         ensure_symlink(link_path, src, args.dry_run)
         file_count, total_bytes = walk_stats(src)
         rows.append(
@@ -175,8 +223,8 @@ def main() -> int:
                 "key": spec.key,
                 "label": spec.label,
                 "status": "present",
-                "source_candidates": list(spec.source_candidates),
-                "source_path": str(src.relative_to(root)),
+                "source_candidates": list(candidates),
+                "source_path": source_path,
                 "link_path": str(link_path.relative_to(root)),
                 "file_count": file_count,
                 "total_bytes": total_bytes,

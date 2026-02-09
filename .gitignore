@@ -35,6 +35,8 @@ data/external/links/
 data/external/dataset_registry.json
 data/external/mocha_timit/
 data/external/mocha_timit
+data/external/clts/
+data/external/CLTS/
 
 # OS / editor
 .idea/
