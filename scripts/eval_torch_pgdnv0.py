@@ -139,6 +139,7 @@ def main() -> None:
     max_abs_overall = 0.0
     abs_gt_1 = 0
     abs_total = 0
+    abs_gt_1_penalty_sum = 0.0
 
     constraint_penalties: list[float] = []
     ranking_scores: list[float] = []
@@ -178,6 +179,7 @@ def main() -> None:
                 max_abs_overall = max(max_abs_overall, max_abs)
                 abs_gt_1 += int((torch.abs(v_cpu) > 1.0).sum().item())
                 abs_total += int(v_cpu.numel())
+                abs_gt_1_penalty_sum += float(torch.relu(torch.abs(v_cpu) - 1.0).sum().item())
 
             # Per-record confidence terms over S samples.
             # Shape: [S, B, 32]
@@ -226,7 +228,10 @@ def main() -> None:
         "range_scale": float(range_scale),
         "max_abs": float(max_abs_overall),
         "frac_abs_gt_1": float(abs_gt_1 / max(abs_total, 1)),
+        "abs_gt_1_penalty_mean": float(abs_gt_1_penalty_sum / max(abs_total, 1)),
         "constraint_penalty_mean": float(mean(constraint_penalties) if constraint_penalties else 0.0),
+        "constraint_penalty_min": float(min(constraint_penalties) if constraint_penalties else 0.0),
+        "constraint_penalty_max": float(max(constraint_penalties) if constraint_penalties else 0.0),
         "ranking_score_mean": float(mean(ranking_scores) if ranking_scores else 0.0),
         "uncertainty_mean": float(mean(uncertainties) if uncertainties else 0.0),
         "impossible_penalty_mean": float(mean(impossible_penalties) if impossible_penalties else 0.0),

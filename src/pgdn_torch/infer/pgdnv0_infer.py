@@ -116,8 +116,8 @@ def main() -> None:
     parser.add_argument(
         "--enforce-range",
         action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Apply tanh range contract to diffusion outputs (default: from checkpoint, else enabled)",
+        default=True,
+        help="Apply tanh range contract to diffusion outputs (default: enabled)",
     )
     parser.add_argument(
         "--range-scale",
@@ -189,13 +189,8 @@ def main() -> None:
     ckpt = _load_checkpoint(args.checkpoint, device)
     ablation = str(ckpt.get("ablation", "none"))
 
-    ckpt_enforce_range = ckpt.get("enforce_range")
     ckpt_range_scale = ckpt.get("range_scale")
-    enforce_range = (
-        bool(args.enforce_range)
-        if args.enforce_range is not None
-        else bool(ckpt_enforce_range) if ckpt_enforce_range is not None else True
-    )
+    enforce_range = bool(args.enforce_range)
     range_scale = (
         float(args.range_scale)
         if args.range_scale is not None

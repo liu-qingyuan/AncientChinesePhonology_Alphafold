@@ -7,6 +7,8 @@ from typing import cast
 import torch
 from torch import nn
 
+from .articulatory_constraints import articulatory_constraint_loss
+
 
 @dataclass(frozen=True)
 class LossTerms:
@@ -16,6 +18,7 @@ class LossTerms:
     constraint_M: float
     constraint_N: float
     constraint_C: float
+    artic_constraint_mean: float
     total_loss: float
 
 
@@ -488,11 +491,15 @@ class PGDNTorchV0(nn.Module):
         range_scale: float = 1.0,
         constraint_slot_weights: list[float] | None = None,
         constraint_dim_weights: list[float] | None = None,
+        artic_loss_weight: float = 0.0,
     ) -> None:
         super().__init__()
         self.ablation = ablation
         self.enforce_range = bool(enforce_range)
         self.range_scale = float(range_scale)
+        self.artic_loss_weight = float(artic_loss_weight)
+        if self.artic_loss_weight < 0.0:
+            raise ValueError("artic_loss_weight must be >= 0")
         self.embedder = GraphEmbedder(input_dim=32, single_dim=64, pair_dim=32)
         self.pairformer = PairformerLite(
             single_dim=64,
@@ -519,7 +526,13 @@ class PGDNTorchV0(nn.Module):
         self.register_buffer("constraint_slot_weights", torch.tensor(slot_w, dtype=torch.float32))
         self.register_buffer("constraint_dim_weights", torch.tensor(dim_w, dtype=torch.float32))
 
-    def forward_loss(self, target_vector: torch.Tensor, slot_mask: torch.Tensor) -> tuple[torch.Tensor, LossTerms]:
+    def forward_loss(
+        self,
+        target_vector: torch.Tensor,
+        slot_mask: torch.Tensor,
+        articulatory_vector: torch.Tensor | None = None,
+        articulatory_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, LossTerms]:
         # target_vector: [B, 32]
         # slot_mask: [B, 4] values in {0,1} for I,M,N,C
         single, pair = self.embedder(target_vector)
@@ -553,7 +566,18 @@ class PGDNTorchV0(nn.Module):
             denom = torch.clamp(torch.sum(w), min=1e-8)
             constraint_t = torch.sum(slot_losses * w) / denom
 
-        total = loss_t + 0.1 * constraint_t
+        if self.artic_loss_weight > 0.0:
+            artic_constraint_t = articulatory_constraint_loss(
+                predicted_vector=x0_hat,
+                target_vector=target_vector,
+                slot_mask=slot_mask,
+                articulatory_vector=articulatory_vector,
+                articulatory_mask=articulatory_mask,
+            )
+        else:
+            artic_constraint_t = torch.tensor(0.0, device=target_vector.device)
+
+        total = loss_t + 0.1 * constraint_t + self.artic_loss_weight * artic_constraint_t
         terms = LossTerms(
             denoise_mse=float(denoise_mse_t.detach().cpu().item()),
             constraint_loss=float(constraint_t.detach().cpu().item()),
@@ -561,6 +585,7 @@ class PGDNTorchV0(nn.Module):
             constraint_M=float(slot_losses[1].detach().cpu().item()),
             constraint_N=float(slot_losses[2].detach().cpu().item()),
             constraint_C=float(slot_losses[3].detach().cpu().item()),
+            artic_constraint_mean=float(artic_constraint_t.detach().cpu().item()),
             total_loss=float(total.detach().cpu().item()),
         )
         return total, terms

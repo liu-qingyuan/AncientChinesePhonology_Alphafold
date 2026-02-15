@@ -107,7 +107,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
 
 ## TODOs
 
-- [ ] 1) Lock down vector range contract across diffusion + ranking
+- [x] 1) Lock down vector range contract across diffusion + ranking
 
   What to do:
   - Add a single “range contract” mechanism used consistently in:
@@ -131,7 +131,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
     - `PYTHONPATH=src python3 -m pgdn_torch.infer.pgdnv0_infer --checkpoint runs/range_contract_train/checkpoint_none.pt --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split dev --limit 16 --samples 2 --num-steps 10 --seed 7 --out runs/range_contract_infer`
     - Assert: `runs/range_contract_infer/infer_meta.json` exists
 
-- [ ] 2) Add graph-aware batching for ACP (so Pairformer coupling is meaningful)
+- [x] 2) Add graph-aware batching for ACP (so Pairformer coupling is meaningful)
 
   What to do:
   - Extend `ACPJsonlDataset` to optionally expose `graph_id`.
@@ -147,7 +147,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
   Acceptance Criteria:
   - With `--batching graph`, a training epoch completes with `batch_size <= 64` without OOM on GPU and without excessive CPU time.
 
-- [ ] 3) Pairformer: implement bidirectional triangle multiplication + stronger gating
+- [x] 3) Pairformer: implement bidirectional triangle multiplication + stronger gating
 
   What to do:
   - Replace single-path `TriangleMultiplicativeUpdate` with two paths:
@@ -166,7 +166,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
   - `python3 -m compileall -q src scripts` passes
   - ACP train smoke with `--batching graph --batch-size 32` exits 0
 
-- [ ] 4) Pairformer: “true recycling” semantics (prev state) + convergence metrics
+- [x] 4) Pairformer: “true recycling” semantics (prev state) + convergence metrics
 
   What to do:
   - Modify PairformerLite to accept optional `prev_single/prev_pair` inputs.
@@ -180,7 +180,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
   Acceptance Criteria:
   - In inference with `--recycle 3`, `infer_meta.json` includes `recycle_deltas` array of length 3
 
-- [ ] 5) Diffusion: schedule options + prediction type (eps/v/x0)
+- [x] 5) Diffusion: schedule options + prediction type (eps/v/x0)
 
   What to do:
   - Add schedule choices: linear (current), cosine (common), and a small-step “fast” schedule.
@@ -196,7 +196,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
   Acceptance Criteria:
   - Train smoke works with `--diffusion-schedule cosine` and `--diffusion-pred v` (flags to be added)
 
-- [ ] 6) Diffusion: classifier-free guidance (CFG) + optional EMA weights
+- [x] 6) Diffusion: classifier-free guidance (CFG) + optional EMA weights
 
   What to do:
   - Implement conditioning dropout during training (e.g., 10-20%) to enable CFG.
@@ -210,7 +210,7 @@ Critical Path: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8
   - Infer smoke runs with `--cfg-scale 1.5` and produces samples
   - If EMA enabled, checkpoint includes EMA state and infer can select it
 
-- [ ] 7) Constraints: hierarchical slot-weighted loss + optional group coupling
+- [x] 7) Constraints: hierarchical slot-weighted loss + optional group coupling
 
   What to do:
   - Replace single scalar constraint with:
@@ -291,7 +291,7 @@ assert da==db, 'shared_denoise digests differ across batch sizes'
 print('OK: shared_denoise digests invariant across batch sizes')
 PY`
 
-- [ ] 8) Add a lightweight eval script for baseline regression checks
+- [x] 8) Add a lightweight eval script for baseline regression checks
 
   What to do:
   - Create a script (e.g. `scripts/eval_torch_pgdnv0.py`) that:
@@ -310,7 +310,7 @@ PY`
   Acceptance Criteria:
   - Script exits 0 and writes `runs/<job>/eval.json`
 
-- [ ] 9) Documentation and reproducibility
+- [x] 9) Documentation and reproducibility
 
   What to do:
   - Update `README.md` with the new flags:
@@ -406,6 +406,92 @@ PY`
     - `git check-ignore -q runs/bench_group_coupling_smoke/summary.json` exits 0
     - `git ls-files --error-unmatch runs/bench_group_coupling_smoke/summary.json` exits non-zero
 
+- [x] 11) Metric: character-consistency from infer samples (prove coupling is useful)
+
+  Goal:
+  - Add a linguistics-driven metric that directly measures whether coupling increases within-character consistency across records (periods/languages).
+
+  What to do:
+  - Extend `scripts/benchmark_group_coupling.py` to compute a new metric block per mode by reading infer artifacts:
+    - Input: `runs/<bench>/<mode>/infer/samples/sample_XXX.pt` written by `pgdn_torch.infer.pgdnv0_infer`.
+      - Each file contains: `{ "record_id": list[str], "vector": Tensor[B, 32] }`.
+    - For each `record_id`, compute `v_mean(record_id)` by averaging vectors across all sample_XXX.pt files.
+    - Define `character = record_id.split(":", 1)[0]`.
+    - For each character with `n_records >= 2`:
+      - Compute mean pairwise cosine distance across record mean vectors:
+        - `cosine_distance(u,v) = 1 - (u·v)/(||u||*||v||)`
+      - Exclude any record vectors with zero norm (count and report skips; do not silently treat as 0).
+    - Aggregate overall stats (character-weighted; each character contributes equally):
+      - `mean`, `median`, `p90` of per-character mean distance
+      - `n_characters_total`, `n_characters_used`, `n_characters_excluded_small`, `n_records_used`, `n_records_skipped_zero_norm`
+  - Output schema (locked):
+    - Write per-mode overall stats into `runs/<bench>/summary.json` under `by_mode[mode]["character_consistency"]`.
+    - Write per-mode detailed per-character results to `runs/<bench>/<mode>/infer/metrics/character_consistency/by_character.json`.
+      - Guardrail: store summaries only (n_records, mean_distance, optional percentiles). Do NOT store raw vectors or pairwise matrices.
+    - Include `metric_version: 1` in both summary and by_character outputs.
+
+  Guardrails:
+  - `torch.load` on `.pt` is pickle-based; treat inputs as trusted local artifacts produced by our own infer runs only.
+  - Fail-fast on schema mismatch (len(record_id) != vector.shape[0], missing keys, no sample files) with actionable error.
+  - Keep runtime bounded: do not compute or serialize O(k^2) matrices.
+  - Determinism: write JSON with stable ordering (sort characters; use deterministic key ordering) so sha256 checks are meaningful.
+
+  References:
+  - `src/pgdn_torch/infer/pgdnv0_infer.py` - writes `samples/sample_XXX.pt` via `torch.save({"record_id": ..., "vector": ...})`
+  - `scripts/benchmark_group_coupling.py` - aggregation point (already writes `summary.json`/`summary.csv`)
+
+  Acceptance Criteria:
+  - `python3 -m compileall -q src scripts` passes
+  - Happy path (extends existing Task 10 benchmark):
+    - `PYTHONPATH=src python3 scripts/benchmark_group_coupling.py --checkpoint runs/pgdnv0_paper_align_smoke/checkpoint_none.pt --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split dev --limit 64 --batch-size 16 --batching graph --samples 2 --num-steps 10 --seed 7 --cfg-scale 1.5 --out runs/bench_group_coupling_smoke --csv`
+    - Assert (non-interactive):
+      - `python3 - <<'PY'
+import json
+from pathlib import Path
+root = Path('runs/bench_group_coupling_smoke')
+summary = json.loads((root/'summary.json').read_text(encoding='utf-8'))
+for mode in summary['modes']:
+    m = summary['by_mode'][mode]
+    cc = m.get('character_consistency')
+    assert isinstance(cc, dict)
+    assert cc.get('metric_version') == 1
+    for k in ['mean','median','p90','n_characters_total','n_characters_used','n_characters_excluded_small']:
+        assert k in cc
+    by_char = root / mode / 'infer' / 'metrics' / 'character_consistency' / 'by_character.json'
+    assert by_char.is_file() and by_char.stat().st_size > 0
+    obj = json.loads(by_char.read_text(encoding='utf-8'))
+    assert obj.get('metric_version') == 1
+    assert 'by_character' in obj
+print('OK')
+PY`
+  - Determinism check (same bench rerun yields identical metric outputs):
+    - `sha256sum runs/bench_group_coupling_smoke/none/infer/metrics/character_consistency/by_character.json`
+    - rerun the same benchmark command
+    - `sha256sum ...` matches exactly
+
+- [x] 12) Data: download external resources (local-only) into `data/external/`
+
+  Goal:
+  - Prepare inputs for later extrinsic metrics (Qieyun-class coherence and phonetic-series coherence), without committing or vendoring external datasets.
+
+  What to do:
+  - Add a small helper script `scripts/fetch_external_linguistics_data.py` that downloads:
+    - Tshet-uinh Qieyun data: `https://github.com/nk2028/tshet-uinh-data` into `data/external/tshet-uinh-data/` (git clone).
+    - Unihan data (UAX #38 / UCD) into `data/external/unihan/` (download the official Unihan zip and extract).
+  - Local-only policy (locked):
+    - Do NOT add submodules.
+    - Do NOT vendor snapshot files.
+    - Do NOT commit downloaded artifacts.
+  - Provenance logging (required): print the source URL + resolved commit hash (for git clone) and the downloaded filename/hash (for Unihan zip).
+
+  Acceptance Criteria:
+  - `PYTHONPATH=src python3 scripts/fetch_external_linguistics_data.py --out data/external` exits 0
+  - `test -d data/external/tshet-uinh-data/.git` and `git -C data/external/tshet-uinh-data rev-parse HEAD` succeeds
+  - `test -s data/external/unihan/Unihan.zip` and `test -s data/external/unihan/Unihan_Readings.txt`
+  - Hygiene: artifacts remain untracked:
+    - `git ls-files --error-unmatch data/external/tshet-uinh-data` exits non-zero
+    - `git ls-files --error-unmatch data/external/unihan/Unihan.zip` exits non-zero
+
 ---
 
 ## Success Criteria
@@ -453,8 +539,142 @@ test -s runs/pgdnv0_paper_align_smoke_infer/infer_meta.json
 ```
 
 ### Final Checklist
-- [ ] ACP baseline stays runnable end-to-end
-- [ ] Pairformer improvements are behind flags and do not break `--ablation` options
-- [ ] Diffusion improvements (schedule/pred/CFG) are behind flags and are verifiable via smoke runs
-- [ ] Constraint improvements log measurable terms (not just a single scalar)
-- [ ] Range contract is consistent with ranking and targets
+- [x] ACP baseline stays runnable end-to-end
+- [x] Pairformer improvements are behind flags and do not break `--ablation` options
+- [x] Diffusion improvements (schedule/pred/CFG) are behind flags and are verifiable via smoke runs
+- [x] Constraint improvements log measurable terms (not just a single scalar)
+- [x] Range contract is consistent with ranking and targets
+
+---
+
+## Option 2 (Framework Core) - Next Execution Pack
+
+Use this when coupling evidence is complete and we switch back to core architecture implementation hardening.
+
+### Immediate Goals
+- Validate Pairformer core path (bidirectional triangle + true recycling) with fresh smoke artifacts.
+- Validate diffusion knobs (`schedule`, `pred`, `CFG`, `EMA`) on the same ACP slice to ensure no regressions.
+- Close the plan checklist by producing one reproducible "all-green" command bundle.
+
+### Execution Batch A (Pairformer core)
+1. Train smoke with Pairformer enabled and explicit recycle:
+   - `PYTHONPATH=src python3 -m pgdn_torch.train.pgdnv0_train --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split train --limit 2048 --epochs 1 --batch-size 32 --batching graph --pairformer-blocks 2 --recycle 3 --seed 42 --out runs/option2_pairformer_train`
+2. Infer smoke with recycle verification:
+   - `PYTHONPATH=src python3 -m pgdn_torch.infer.pgdnv0_infer --checkpoint runs/option2_pairformer_train/checkpoint_none.pt --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split dev --limit 128 --batch-size 32 --batching graph --samples 2 --num-steps 10 --seed 7 --out runs/option2_pairformer_infer`
+3. Assert `recycle_deltas` length is 3 in `runs/option2_pairformer_infer/infer_meta.json`.
+
+### Execution Batch B (Diffusion core)
+1. Train smoke with cosine + v-pred + CFG-ready dropout + EMA:
+   - `PYTHONPATH=src python3 -m pgdn_torch.train.pgdnv0_train --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split train --limit 2048 --epochs 1 --batch-size 32 --batching graph --diffusion-schedule cosine --diffusion-pred v --cond-dropout 0.1 --ema-decay 0.999 --seed 42 --out runs/option2_diffusion_train`
+2. Infer smoke with CFG + EMA:
+   - `PYTHONPATH=src python3 -m pgdn_torch.infer.pgdnv0_infer --checkpoint runs/option2_diffusion_train/checkpoint_none.pt --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split dev --limit 128 --batch-size 32 --batching graph --samples 2 --num-steps 10 --cfg-scale 1.5 --use-ema --seed 7 --out runs/option2_diffusion_infer`
+3. Eval smoke:
+   - `PYTHONPATH=src python3 scripts/eval_torch_pgdnv0.py --checkpoint runs/option2_diffusion_train/checkpoint_none.pt --targets data/targets/acp_targets.jsonl --split-manifest data/splits/manifest.json --split-strategy random --split dev --limit 128 --samples 2 --num-steps 10 --batch-size 32 --batching graph --cfg-scale 1.5 --use-ema --out runs/option2_diffusion_eval`
+
+### Exit Criteria for Option 2
+- `compileall` passes.
+- Pairformer infer meta contains recycle deltas with expected length.
+- Diffusion run succeeds for cosine + v-pred + CFG + EMA.
+- Eval writes `runs/option2_diffusion_eval/eval.json`.
+- No coupling/range regression in infer meta (`range_ok=true`, no mismatch explosions).
+
+### One-Shot Execution Checklist (for direct rerun)
+
+Use this as a single sequential task list when you want to rerun the whole validated path without re-planning.
+
+- [ ] Preflight: `python3 -m compileall -q src scripts`
+- [ ] Ensure baseline checkpoint exists: `runs/option2_diffusion_train/checkpoint_none.pt` (or rerun Batch B train)
+- [ ] Run final reproducible snapshot: train -> infer -> eval (commands below)
+- [ ] Verify `infer_meta.json` contains `range_ok=true` and `recycle_deltas`
+- [ ] Verify `eval.json` contains `max_abs`, `frac_abs_gt_1`, `abs_gt_1_penalty_mean`, `constraint_penalty_mean`, `constraint_penalty_min`, `constraint_penalty_max`
+
+```bash
+set -euo pipefail
+export PYTHONPATH=src
+
+STAMP="$(date +%Y%m%d_%H%M%S)"
+OUT_BASE="runs/route2_final_smoke_${STAMP}"
+
+python3 -m compileall -q src scripts
+
+python3 -m pgdn_torch.train.pgdnv0_train \
+  --targets data/targets/acp_targets.jsonl \
+  --split-manifest data/splits/manifest.json \
+  --split-strategy random \
+  --split train \
+  --limit 2048 \
+  --epochs 1 \
+  --batch-size 32 \
+  --batching graph \
+  --diffusion-schedule cosine \
+  --diffusion-pred v \
+  --cond-dropout 0.1 \
+  --ema-decay 0.999 \
+  --seed 42 \
+  --out "${OUT_BASE}_train"
+
+python3 -m pgdn_torch.infer.pgdnv0_infer \
+  --checkpoint "${OUT_BASE}_train/checkpoint_none.pt" \
+  --targets data/targets/acp_targets.jsonl \
+  --split-manifest data/splits/manifest.json \
+  --split-strategy random \
+  --split dev \
+  --limit 128 \
+  --batch-size 32 \
+  --batching graph \
+  --samples 2 \
+  --num-steps 10 \
+  --cfg-scale 1.5 \
+  --use-ema \
+  --seed 7 \
+  --out "${OUT_BASE}_infer"
+
+python3 scripts/eval_torch_pgdnv0.py \
+  --checkpoint "${OUT_BASE}_train/checkpoint_none.pt" \
+  --targets data/targets/acp_targets.jsonl \
+  --split-manifest data/splits/manifest.json \
+  --split-strategy random \
+  --split dev \
+  --limit 128 \
+  --samples 2 \
+  --num-steps 10 \
+  --batch-size 32 \
+  --batching graph \
+  --cfg-scale 1.5 \
+  --use-ema \
+  --out "${OUT_BASE}_eval"
+
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+base = os.environ["OUT_BASE"]
+infer_meta = Path(f"{base}_infer/infer_meta.json")
+eval_json = Path(f"{base}_eval/eval.json")
+
+assert infer_meta.exists(), f"missing {infer_meta}"
+assert eval_json.exists(), f"missing {eval_json}"
+
+im = json.loads(infer_meta.read_text(encoding="utf-8"))
+ev = json.loads(eval_json.read_text(encoding="utf-8"))
+
+assert im.get("range_ok") is True, "range_ok is not true"
+assert isinstance(im.get("recycle_deltas"), list), "recycle_deltas missing"
+
+required = [
+    "max_abs",
+    "frac_abs_gt_1",
+    "abs_gt_1_penalty_mean",
+    "constraint_penalty_mean",
+    "constraint_penalty_min",
+    "constraint_penalty_max",
+]
+for k in required:
+    assert k in ev, f"missing eval key: {k}"
+
+print("OK final snapshot verified")
+print("infer:", infer_meta)
+print("eval :", eval_json)
+PY
+```

@@ -1,0 +1,4 @@
+mode,character_consistency_mean,character_consistency_std,ranking_score_mean,ranking_score_std,constraint_penalty_mean,constraint_penalty_std,max_abs,max_abs_std,uncertainty_mean,uncertainty_std
+none,0.9217,0.0010,0.5705,0.0002,0.1356,0.0003,0.9914,0.0001,0.2623,0.0002
+shared_noise,0.9143,0.0010,0.5705,0.0002,0.1356,0.0003,0.9914,0.0001,0.2623,0.0002
+shared_denoise,0.9137,0.0011,0.5705,0.0003,0.1357,0.0004,0.9914,0.0001,0.2623,0.0002

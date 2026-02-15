@@ -4,7 +4,7 @@ import argparse
 import json
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import torch
 from torch.utils.data import DataLoader
@@ -113,6 +113,12 @@ def main() -> None:
         help="Optional per-dimension weights within a slot (8 values).",
     )
     parser.add_argument(
+        "--artic-loss-weight",
+        type=float,
+        default=0.0,
+        help="Weight for optional articulatory constraint term (>= 0).",
+    )
+    parser.add_argument(
         "--enforce-range",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -126,6 +132,9 @@ def main() -> None:
     )
     parser.add_argument("--out", type=Path, default=Path("runs/pgdn_torch_v0"))
     args = parser.parse_args()
+
+    if float(args.artic_loss_weight) < 0.0:
+        parser.error("--artic-loss-weight must be >= 0")
 
     torch.manual_seed(int(args.seed))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -146,7 +155,7 @@ def main() -> None:
 
     pin_memory = device.type == "cuda"
     num_workers = max(int(args.num_workers), 0)
-    common_kwargs: dict[str, object] = {
+    common_kwargs: dict[str, Any] = {
         "num_workers": num_workers,
         "pin_memory": pin_memory,
         "collate_fn": collate_pgdn,
@@ -186,6 +195,7 @@ def main() -> None:
         constraint_dim_weights=list(args.constraint_dim_weights)
         if args.constraint_dim_weights is not None
         else None,
+        artic_loss_weight=float(args.artic_loss_weight),
     ).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=float(args.lr))
 
@@ -201,6 +211,8 @@ def main() -> None:
 
     t_start = time.time()
     step = 0
+    artic_constraint_sum = 0.0
+    artic_constraint_count = 0
     for epoch in range(int(args.epochs)):
         if graph_sampler is not None:
             graph_sampler.set_epoch(epoch)
@@ -212,11 +224,31 @@ def main() -> None:
                     raise RuntimeError("graph batching violated: batch contains multiple graph_id values")
             target = cast(torch.Tensor, batch["target_vector"]).to(device, non_blocking=True)
             slot_mask = cast(torch.Tensor, batch["slot_mask"]).to(device, non_blocking=True)
+            articulatory_vector_obj = batch.get("articulatory_vector")
+            articulatory_mask_obj = batch.get("articulatory_mask")
+            articulatory_vector = (
+                articulatory_vector_obj.to(device, non_blocking=True)
+                if isinstance(articulatory_vector_obj, torch.Tensor)
+                else None
+            )
+            articulatory_mask = (
+                articulatory_mask_obj.to(device, non_blocking=True)
+                if isinstance(articulatory_mask_obj, torch.Tensor)
+                else None
+            )
 
             opt.zero_grad(set_to_none=True)
-            loss, terms = model.forward_loss(target, slot_mask)
+            loss, terms = model.forward_loss(
+                target,
+                slot_mask,
+                articulatory_vector=articulatory_vector,
+                articulatory_mask=articulatory_mask,
+            )
             loss.backward()
             opt.step()
+
+            artic_constraint_sum += float(terms.artic_constraint_mean)
+            artic_constraint_count += 1
 
             if use_ema and ema_state is not None:
                 # Maintain EMA weights for the diffusion net only.
@@ -233,6 +265,8 @@ def main() -> None:
                     "loss": terms.total_loss,
                     "denoise_mse": terms.denoise_mse,
                     "constraint_loss": terms.constraint_loss,
+                    "artic_loss_weight": float(args.artic_loss_weight),
+                    "artic_constraint_mean": terms.artic_constraint_mean,
                     "constraint_I": terms.constraint_I,
                     "constraint_M": terms.constraint_M,
                     "constraint_N": terms.constraint_N,
@@ -244,6 +278,7 @@ def main() -> None:
                     f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     # Save checkpoint.
+    observed_artic_constraint_mean = artic_constraint_sum / max(artic_constraint_count, 1)
     torch.save(
         {
             "ablation": args.ablation,
@@ -261,6 +296,8 @@ def main() -> None:
             "constraint_dim_weights": [float(x) for x in args.constraint_dim_weights]
             if args.constraint_dim_weights is not None
             else None,
+            "artic_loss_weight": float(args.artic_loss_weight),
+            "artic_constraint_mean": float(observed_artic_constraint_mean),
             "batching": str(args.batching),
             "split_manifest": str(args.split_manifest) if args.split_manifest else None,
             "split_strategy": str(args.split_strategy) if args.split_manifest else None,

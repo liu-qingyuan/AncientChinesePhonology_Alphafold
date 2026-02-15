@@ -37,6 +37,8 @@ data/external/mocha_timit/
 data/external/mocha_timit
 data/external/clts/
 data/external/CLTS/
+data/external/tshet-uinh-data/
+data/external/unihan/
 
 # OS / editor
 .idea/
