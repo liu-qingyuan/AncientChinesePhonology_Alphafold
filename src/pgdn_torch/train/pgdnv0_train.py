@@ -213,6 +213,9 @@ def main() -> None:
     step = 0
     artic_constraint_sum = 0.0
     artic_constraint_count = 0
+    articulatory_batches_seen = 0
+    articulatory_mask_sum = 0.0
+    articulatory_mask_nonzero_batches = 0
     for epoch in range(int(args.epochs)):
         if graph_sampler is not None:
             graph_sampler.set_epoch(epoch)
@@ -236,6 +239,14 @@ def main() -> None:
                 if isinstance(articulatory_mask_obj, torch.Tensor)
                 else None
             )
+            batch_has_articulatory = articulatory_vector is not None and articulatory_mask is not None
+            batch_articulatory_mask_sum = 0.0
+            if batch_has_articulatory and articulatory_mask is not None:
+                batch_articulatory_mask_sum = float(torch.sum(articulatory_mask.detach()).cpu().item())
+                articulatory_batches_seen += 1
+                articulatory_mask_sum += batch_articulatory_mask_sum
+                if batch_articulatory_mask_sum > 0.0:
+                    articulatory_mask_nonzero_batches += 1
 
             opt.zero_grad(set_to_none=True)
             loss, terms = model.forward_loss(
@@ -267,6 +278,8 @@ def main() -> None:
                     "constraint_loss": terms.constraint_loss,
                     "artic_loss_weight": float(args.artic_loss_weight),
                     "artic_constraint_mean": terms.artic_constraint_mean,
+                    "batch_has_articulatory": bool(batch_has_articulatory),
+                    "batch_articulatory_mask_sum": float(batch_articulatory_mask_sum),
                     "constraint_I": terms.constraint_I,
                     "constraint_M": terms.constraint_M,
                     "constraint_N": terms.constraint_N,
@@ -298,6 +311,9 @@ def main() -> None:
             else None,
             "artic_loss_weight": float(args.artic_loss_weight),
             "artic_constraint_mean": float(observed_artic_constraint_mean),
+            "articulatory_batches_seen": int(articulatory_batches_seen),
+            "articulatory_mask_sum": float(articulatory_mask_sum),
+            "articulatory_mask_nonzero_batches": int(articulatory_mask_nonzero_batches),
             "batching": str(args.batching),
             "split_manifest": str(args.split_manifest) if args.split_manifest else None,
             "split_strategy": str(args.split_strategy) if args.split_manifest else None,

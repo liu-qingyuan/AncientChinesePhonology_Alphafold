@@ -79,6 +79,8 @@ def _row_from_utterance(utt: MochaUtterance) -> dict[str, object]:
         + _slot_vector(lab_key)
         + _slot_vector(aux_key)
     )
+    articulatory_vector = _slot_vector(ema_key)
+    articulatory_mask = [1.0 if ema_key is not None else 0.0]
     mask = {
         "I": 1 if wav_key is not None else 0,
         "M": 1 if ema_key is not None else 0,
@@ -93,6 +95,8 @@ def _row_from_utterance(utt: MochaUtterance) -> dict[str, object]:
         "stem": utt.stem,
         "target_vector": target_vector,
         "mask": mask,
+        "articulatory_vector": articulatory_vector,
+        "articulatory_mask": articulatory_mask,
         "paths": {
             "wav": wav_key,
             "ema": ema_key,
@@ -144,11 +148,17 @@ def build_mocha_sidecar(
     split_path.write_text(json.dumps(split_obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     speakers_seen = sorted({str(r.get("speaker", "")) for r in rows})
+    articulatory_rows = 0
+    for r in rows:
+        raw_mask = r.get("articulatory_mask")
+        if isinstance(raw_mask, list) and raw_mask:
+            articulatory_rows += int(float(raw_mask[0]) > 0.0)
     meta = {
         "source_root": str(root),
         "speakers_requested": speakers,
         "speakers_indexed": speakers_seen,
         "rows": len(rows),
+        "articulatory_rows": articulatory_rows,
         "targets_path": str(targets_path),
         "split_manifest_path": str(split_path),
     }

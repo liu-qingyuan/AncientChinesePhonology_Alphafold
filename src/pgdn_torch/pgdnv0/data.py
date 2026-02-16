@@ -4,7 +4,7 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, cast
 
 import torch
 from torch.utils.data import Dataset, Sampler
@@ -16,10 +16,43 @@ class PGDNSample:
     graph_id: str
     target_vector: torch.Tensor  # [32]
     slot_mask: torch.Tensor  # [4]
+    articulatory_vector: torch.Tensor | None = None
+    articulatory_mask: torch.Tensor | None = None
 
 
-def _mask_to_tensor(mask: dict) -> torch.Tensor:
-    return torch.tensor([float(mask.get(k, 0.0)) for k in ("I", "M", "N", "C")], dtype=torch.float32)
+def _mask_to_tensor(mask: dict[str, object]) -> torch.Tensor:
+    vals: list[float] = []
+    for k in ("I", "M", "N", "C"):
+        v = mask.get(k, 0.0)
+        vals.append(float(v) if isinstance(v, (int, float)) else 0.0)
+    return torch.tensor(vals, dtype=torch.float32)
+
+
+def _target_vector_to_tensor(row: dict[str, object]) -> torch.Tensor:
+    raw = row.get("target_vector")
+    if not isinstance(raw, list):
+        raise ValueError("row.target_vector must be a list")
+    return torch.tensor([float(x) for x in raw], dtype=torch.float32)
+
+
+def _optional_articulatory_vector(row: dict[str, object]) -> torch.Tensor | None:
+    raw = row.get("articulatory_vector")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return None
+    return torch.tensor([float(x) for x in raw], dtype=torch.float32)
+
+
+def _optional_articulatory_mask(row: dict[str, object]) -> torch.Tensor | None:
+    raw = row.get("articulatory_mask")
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return torch.tensor([float(raw)], dtype=torch.float32)
+    if isinstance(raw, list):
+        return torch.tensor([float(x) for x in raw], dtype=torch.float32)
+    return None
 
 
 class ACPJsonlDataset(Dataset[PGDNSample]):
@@ -29,11 +62,11 @@ class ACPJsonlDataset(Dataset[PGDNSample]):
         limit: int | None = None,
         include_ids: set[str] | None = None,
     ) -> None:
-        self.rows: list[dict] = []
+        self.rows: list[dict[str, object]] = []
         self.graph_ids: list[str] = []
         with path.open("r", encoding="utf-8") as f:
             for line in f:
-                row = json.loads(line)
+                row = cast(dict[str, object], json.loads(line))
                 if include_ids is not None:
                     rid = row.get("record_id")
                     if rid is None or str(rid) not in include_ids:
@@ -48,13 +81,16 @@ class ACPJsonlDataset(Dataset[PGDNSample]):
 
     def __getitem__(self, idx: int) -> PGDNSample:
         r = self.rows[idx]
-        vec = torch.tensor([float(x) for x in r["target_vector"]], dtype=torch.float32)
-        mask = _mask_to_tensor(r.get("mask", {}))
+        vec = _target_vector_to_tensor(r)
+        raw_mask = r.get("mask")
+        mask = _mask_to_tensor(raw_mask) if isinstance(raw_mask, dict) else _mask_to_tensor({})
         return PGDNSample(
             record_id=str(r.get("record_id", idx)),
             graph_id=str(r.get("graph_id", "")),
             target_vector=vec,
             slot_mask=mask,
+            articulatory_vector=_optional_articulatory_vector(r),
+            articulatory_mask=_optional_articulatory_mask(r),
         )
 
 
@@ -80,11 +116,19 @@ class SyntheticPGDNDataset(Dataset[PGDNSample]):
 
 
 def collate_pgdn(batch: list[PGDNSample]) -> dict[str, object]:
+    artics = [b.articulatory_vector for b in batch]
+    artics_mask = [b.articulatory_mask for b in batch]
+    have_artic = all(a is not None for a in artics)
+    have_artic_mask = all(a is not None for a in artics_mask)
     return {
         "record_id": [b.record_id for b in batch],
         "graph_id": [b.graph_id for b in batch],
         "target_vector": torch.stack([b.target_vector for b in batch], dim=0),
         "slot_mask": torch.stack([b.slot_mask for b in batch], dim=0),
+        "articulatory_vector": torch.stack([a for a in artics if a is not None], dim=0) if have_artic else None,
+        "articulatory_mask": torch.stack([a for a in artics_mask if a is not None], dim=0)
+        if have_artic_mask
+        else None,
     }
 
 
@@ -100,6 +144,7 @@ class GraphBatchSampler(Sampler[list[int]]):
         shuffle_graphs: bool = True,
         shuffle_within_graph: bool = True,
     ) -> None:
+        super().__init__(None)
         self.graph_ids = list(graph_ids)
         self.batch_size = max(int(batch_size), 1)
         self.seed = int(seed)
